@@ -1,1 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Moxfield Inventory Matcher</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#1e1e1e;--bg-card:#2a2a2a;--fg:#f0f0f0;--fg-muted:#888;
+    --accent:#4a9eff;--success:#4caf50;--warning:#ff9800;--danger:#f44336;
+    --entry:#333;--border:#3a3a3a;
+  }
+  body{background:var(--bg);color:var(--fg);font-family:'Segoe UI',sans-serif;min-height:100vh}
+  header{background:var(--bg-card);padding:16px 24px;border-bottom:1px solid var(--border)}
+  header h1{color:var(--accent);font-size:1.4rem}
+  header p{color:var(--fg-muted);font-size:.85rem;margin-top:2px}
 
+  .main{padding:20px 24px;max-width:1300px;margin:0 auto}
+  const INVENTORY_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/inventory.csv";
+  /* Input card */
+  .card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:18px;margin-bottom:16px}
+  .card h2{font-size:.95rem;font-weight:700;margin-bottom:4px}
+  .card p.hint{font-size:.78rem;color:var(--fg-muted);margin-bottom:10px}
+
+  textarea{width:100%;background:var(--entry);color:var(--fg);border:1px solid var(--border);
+    border-radius:6px;padding:10px;font-family:monospace;font-size:.82rem;resize:vertical;
+    outline:none;transition:border .2s}
+  textarea:focus{border-color:var(--accent)}
+
+  .row{display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap}
+  button{background:var(--accent);color:#fff;border:none;border-radius:6px;
+    padding:8px 20px;font-size:.9rem;font-weight:700;cursor:pointer;transition:opacity .2s}
+  button:hover{opacity:.85}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.secondary{background:var(--entry)}
+  button.success{background:var(--success)}
+  button.danger{background:var(--danger)}
+
+  /* Progress */
+  .status{font-size:.82rem;color:var(--fg-muted);margin-top:6px;min-height:18px}
+  progress{width:100%;height:6px;border-radius:4px;margin-top:6px;appearance:none}
+  progress::-webkit-progress-bar{background:var(--entry);border-radius:4px}
+  progress::-webkit-progress-value{background:var(--accent);border-radius:4px}
+
+  /* Summary pills */
+  .summary-bar{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px}
+  .pill{background:var(--bg-card);border:1px solid var(--border);border-radius:20px;
+    padding:5px 14px;font-size:.82rem}
+  .pill.exact{border-color:var(--success);color:var(--success)}
+  .pill.partial{border-color:var(--warning);color:var(--warning)}
+  .pill.missing{border-color:var(--danger);color:var(--danger)}
+  .pill.price{border-color:var(--accent);color:var(--accent)}
+
+  /* Table */
+  .table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
+  table{width:100%;border-collapse:collapse;font-size:.82rem}
+  thead th{background:#222;color:var(--fg);padding:9px 10px;text-align:left;
+    font-weight:700;white-space:nowrap;cursor:pointer;user-select:none}
+  thead th:hover{background:#2d2d2d}
+  thead th .sort-icon{margin-left:4px;color:var(--fg-muted)}
+  tbody tr{border-bottom:1px solid var(--border)}
+  tbody tr.exact{background:#1a3a1a}
+  tbody tr.partial{background:#3a2a00}
+  tbody tr.missing{background:#3a1a1a}
+  tbody td{padding:7px 10px;white-space:nowrap}
+  tbody tr.exact td{color:var(--success)}
+  tbody tr.partial td{color:var(--warning)}
+  tbody tr.missing td{color:var(--danger)}
+
+  /* Filter row */
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+  .filters input,.filters select{background:var(--entry);color:var(--fg);
+    border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:.82rem;outline:none}
+  .filters input:focus,.filters select:focus{border-color:var(--accent)}
+  .filters label{font-size:.82rem;color:var(--fg-muted)}
+
+  /* Inventory status */
+  .inv-status{font-size:.8rem;padding:4px 10px;border-radius:4px;display:inline-block;margin-top:6px}
+  .inv-status.ok{background:#1a3a1a;color:var(--success)}
+  .inv-status.err{background:#3a1a1a;color:var(--danger)}
+  .inv-status.loading{background:#1a2a3a;color:var(--accent)}
+
+  /* Spinner */
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--fg-muted);
+    border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:4px}
+
+  .hidden{display:none}
+  #results-section{margin-top:4px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Moxfield Inventory Matcher</h1>
+  <p>Paste a Moxfield decklist and match it against your inventory</p>
+</header>
+
+<div class="main">
+
+  <!-- Inventory status -->
+  <div class="card">
+    <h2>Inventory</h2>
+    <p class="hint">Your inventory CSV is loaded from the repository automatically.</p>
+    <div id="inv-status" class="inv-status loading"><span class="spin"></span>Loading inventory…</div>
+    <div class="row" style="margin-top:10px">
+      <button class="secondary" onclick="reloadInventory()">↻ Reload Inventory</button>
+      <span id="inv-count" style="font-size:.8rem;color:var(--fg-muted)"></span>
+    </div>
+  </div>
+
+  <!-- Decklist input -->
+  <div class="card">
+    <h2>Paste Decklist</h2>
+    <p class="hint">Copy from Moxfield → Export → Copy as Text. Format: <code>1 Black Lotus [LEA]</code></p>
+    <textarea id="decklist-input" rows="10" placeholder="1 Sol Ring [CMR]&#10;1 Black Lotus [LEA]&#10;4 Lightning Bolt [M10]&#10;..."></textarea>
+    <div class="row">
+      <button id="run-btn" onclick="runMatcher()" disabled>▶ Run Matcher</button>
+      <button class="secondary" onclick="clearAll()">✕ Clear</button>
+      <button class="success hidden" id="export-btn" onclick="exportCSV()">⬇ Download CSV</button>
+    </div>
+    <div class="status" id="status-text">Load inventory to begin.</div>
+    <progress id="progress-bar" value="0" max="100"></progress>
+  </div>
+
+  <!-- Results -->
+  <div id="results-section" class="hidden">
+    <div class="summary-bar" id="summary-bar"></div>
+    <div class="filters">
+      <label>Filter:</label>
+      <input type="text" id="search-filter" placeholder="Search card name…" oninput="applyFilters()">
+      <select id="status-filter" onchange="applyFilters()">
+        <option value="">All Statuses</option>
+        <option value="Exact Match">Exact Match</option>
+        <option value="Partial Match">Partial Match</option>
+        <option value="NOT IN INVENTORY">Not In Inventory</option>
+      </select>
+      <select id="board-filter" onchange="applyFilters()">
+        <option value="">All Boards</option>
+      </select>
+    </div>
+    <div class="table-wrap">
+      <table id="results-table">
+        <thead>
+          <tr id="thead-row"></tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ─── CONFIG ────────────────────────────────────────────────────────────────────
+// Point this to your raw CSV in GitHub:
+// e.g. https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/inventory.csv
+const INVENTORY_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/inventory.csv";
+
+const INV_NAME_COL      = "Product Name";
+const INV_SET_COL       = "Set Name";
+const INV_QTY_COL       = "Total Quantity";
+const INV_CONDITION_COL = "Condition";
+
+// ─── STATE ─────────────────────────────────────────────────────────────────────
+let inventory    = [];   // parsed rows from CSV
+let allResults   = [];   // full match results
+let sortCol      = null;
+let sortDir      = 1;
+
+const COLUMNS = [
+  "Card Name","Set Name","Qty Needed","Board",
+  "Match Status","Inv Qty Available","Inv Set Name",
+  "Condition","Foil","Market Price"
+];
+
+// ─── INVENTORY LOADING ─────────────────────────────────────────────────────────
+async function loadInventory(url) {
+  const res = await fetch(url + "?nocache=" + Date.now());
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+}
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) throw new Error("CSV appears empty");
+  const headers = splitCSVLine(lines[0]);
+  return lines.slice(1).filter(l => l.trim()).map(line => {
+    const vals = splitCSVLine(line);
+    const row = {};
+    headers.forEach((h, i) => row[h.trim()] = (vals[i] || "").trim());
+    return row;
+  });
+}
+
+function splitCSVLine(line) {
+  const result = [];
+  let cur = "", inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQ = !inQ; continue; }
+    if (c === ',' && !inQ) { result.push(cur); cur = ""; continue; }
+    cur += c;
+  }
+  result.push(cur);
+  return result;
+}
+
+function enrichInventory(rows) {
+  return rows.map(r => {
+    const cond = (r[INV_CONDITION_COL] || "").trim();
+    const isFoil = /foil/i.test(cond) && !/non-foil/i.test(cond);
+    const condClean = cond.replace(/\s*(Non-)?Foil/gi, "").trim();
+    return {
+      ...r,
+      _name: (r[INV_NAME_COL] || "").toLowerCase().trim(),
+      _set:  (r[INV_SET_COL]  || "").toLowerCase().trim(),
+      _foil: isFoil,
+      _cond: condClean,
+    };
+  });
+}
+
+async function reloadInventory() {
+  const el = document.getElementById("inv-status");
+  const cnt = document.getElementById("inv-count");
+  el.className = "inv-status loading";
+  el.innerHTML = '<span class="spin"></span>Loading inventory…';
+  cnt.textContent = "";
+  document.getElementById("run-btn").disabled = true;
+  try {
+    const text = await loadInventory(INVENTORY_URL);
+    const rows = parseCSV(text);
+    inventory = enrichInventory(rows);
+    el.className = "inv-status ok";
+    el.textContent = `✓ Inventory loaded`;
+    cnt.textContent = `${inventory.length} rows`;
+    document.getElementById("run-btn").disabled = false;
+    setStatus("Inventory ready. Paste a decklist and click Run.");
+  } catch(e) {
+    el.className = "inv-status err";
+    el.textContent = `✗ Failed to load inventory: ${e.message}`;
+    setStatus("Fix INVENTORY_URL in the source, then reload.");
+  }
+}
+
+// ─── DECKLIST PARSING ──────────────────────────────────────────────────────────
+// Supports:  "1 Card Name [SET]"  and section headers like "// Mainboard"
+function parseDecklist(text) {
+  const cards = [];
+  let board = "Mainboard";
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    // Section header
+    if (/^\/\//.test(line)) {
+      const h = line.replace(/^\/\/\s*/, "").trim();
+      if (h) board = h;
+      continue;
+    }
+    // Card line: optional qty, name, optional [SET]
+    const m = line.match(/^(\d+)x?\s+(.+?)(?:\s+\[([A-Z0-9]+)\])?$/i);
+    if (!m) continue;
+    const qty  = parseInt(m[1], 10) || 1;
+    const name = m[2].trim();
+    const set  = m[3] ? m[3].toUpperCase() : null;
+    cards.push({ name, setCode: set, qty, board });
+  }
+  return cards;
+}
+
+// ─── SCRYFALL LOOKUP ───────────────────────────────────────────────────────────
+async function scryfallLookup(name, setCode) {
+  await delay(80); // respect rate limit
+  try {
+    let url;
+    if (setCode) {
+      url = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&set=${setCode.toLowerCase()}`;
+    } else {
+      url = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`;
+    }
+    let res = await fetch(url, {headers:{"User-Agent":"MoxfieldMatcher/2.0"}});
+    if (!res.ok && setCode) {
+      // fallback: no set
+      res = await fetch(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`,
+        {headers:{"User-Agent":"MoxfieldMatcher/2.0"}});
+    }
+    if (!res.ok) return null;
+    const d = await res.json();
+    return {
+      setName:  d.set_name  || "Unknown",
+      setCode:  (d.set || "").toUpperCase(),
+      priceNF:  d.prices?.usd      ? `$${d.prices.usd}`      : "N/A",
+      priceFoil:d.prices?.usd_foil ? `$${d.prices.usd_foil}` : "N/A",
+    };
+  } catch { return null; }
+}
+
+// ─── MATCHING ──────────────────────────────────────────────────────────────────
+function matchCard(card, sf) {
+  const nameKey = card.name.toLowerCase().trim();
+  const setName = sf?.setName || "Unknown";
+  const setKey  = setName.toLowerCase().trim();
+
+  // Exact: name + set
+  const exact = inventory.filter(r => r._name === nameKey && r._set === setKey);
+  if (exact.length) {
+    const r = exact[0];
+    return buildResult(card, sf, r, "Exact Match");
+  }
+  // Partial: name only
+  const partial = inventory.filter(r => r._name === nameKey);
+  if (partial.length) {
+    const r = partial[0];
+    return buildResult(card, sf, r, "Partial Match (Different Set)");
+  }
+  // Missing
+  return {
+    "Card Name":         card.name,
+    "Set Name":          setName,
+    "Qty Needed":        card.qty,
+    "Board":             card.board,
+    "Match Status":      "NOT IN INVENTORY",
+    "Inv Qty Available": 0,
+    "Inv Set Name":      "N/A",
+    "Condition":         "N/A",
+    "Foil":              "N/A",
+    "Market Price":      "N/A",
+  };
+}
+
+function buildResult(card, sf, inv_row, status) {
+  const isFoil = inv_row._foil;
+  const price  = sf ? (isFoil ? sf.priceFoil : sf.priceNF) : "N/A";
+  return {
+    "Card Name":         card.name,
+    "Set Name":          sf?.setName || "Unknown",
+    "Qty Needed":        card.qty,
+    "Board":             card.board,
+    "Match Status":      status,
+    "Inv Qty Available": parseInt(inv_row[INV_QTY_COL]) || 0,
+    "Inv Set Name":      inv_row[INV_SET_COL] || "N/A",
+    "Condition":         inv_row._cond || "N/A",
+    "Foil":              isFoil ? "Foil" : "Non-Foil",
+    "Market Price":      price,
+  };
+}
+
+// ─── MAIN PIPELINE ─────────────────────────────────────────────────────────────
+async function runMatcher() {
+  const text = document.getElementById("decklist-input").value.trim();
+  if (!text) { alert("Please paste a decklist first."); return; }
+
+  document.getElementById("run-btn").disabled = true;
+  document.getElementById("export-btn").classList.add("hidden");
+  document.getElementById("results-section").classList.add("hidden");
+  allResults = [];
+  setProgress(0);
+
+  const cards = parseDecklist(text);
+  if (!cards.length) {
+    setStatus("No cards found. Check the format: '1 Card Name [SET]'");
+    document.getElementById("run-btn").disabled = false;
+    return;
+  }
+
+  setStatus(`Parsed ${cards.length} card entries. Looking up prices…`);
+
+  for (let i = 0; i < cards.length; i++) {
+    const card = cards[i];
+    setStatus(`Scryfall lookup ${i+1}/${cards.length}: ${card.name}…`);
+    const sf  = await scryfallLookup(card.name, card.setCode);
+    const row = matchCard(card, sf);
+    allResults.push(row);
+    setProgress(Math.round(((i+1)/cards.length)*100));
+  }
+
+  setStatus(`Done! ${allResults.length} cards processed.`);
+  setProgress(100);
+  document.getElementById("run-btn").disabled = false;
+  document.getElementById("export-btn").classList.remove("hidden");
+  renderResults();
+}
+
+// ─── RENDER ────────────────────────────────────────────────────────────────────
+function renderResults() {
+  const section = document.getElementById("results-section");
+  section.classList.remove("hidden");
+
+  // Build thead
+  const tr = document.getElementById("thead-row");
+  tr.innerHTML = "";
+  COLUMNS.forEach(col => {
+    const th = document.createElement("th");
+    th.textContent = col;
+    const icon = document.createElement("span");
+    icon.className = "sort-icon";
+    icon.textContent = sortCol === col ? (sortDir === 1 ? "▲" : "▼") : "⇅";
+    th.appendChild(icon);
+    th.onclick = () => { sortBy(col); };
+    tr.appendChild(th);
+  });
+
+  // Populate board filter
+  const boards = [...new Set(allResults.map(r => r["Board"]))];
+  const bf = document.getElementById("board-filter");
+  const curBoard = bf.value;
+  bf.innerHTML = '<option value="">All Boards</option>';
+  boards.forEach(b => {
+    const o = document.createElement("option");
+    o.value = b; o.textContent = b;
+    if (b === curBoard) o.selected = true;
+    bf.appendChild(o);
+  });
+
+  applyFilters();
+  renderSummary();
+}
+
+function applyFilters() {
+  const search = document.getElementById("search-filter").value.toLowerCase();
+  const status = document.getElementById("status-filter").value;
+  const board  = document.getElementById("board-filter").value;
+
+  let rows = allResults.filter(r => {
+    if (search && !r["Card Name"].toLowerCase().includes(search)) return false;
+    if (status && !r["Match Status"].startsWith(status.replace("Partial Match","Partial"))) return false;
+    if (board  && r["Board"] !== board) return false;
+    return true;
+  });
+
+  if (sortCol) {
+    rows = [...rows].sort((a, b) => {
+      let av = a[sortCol], bv = b[sortCol];
+      const an = parseFloat(String(av).replace(/[^0-9.\-]/g,""));
+      const bn = parseFloat(String(bv).replace(/[^0-9.\-]/g,""));
+      if (!isNaN(an) && !isNaN(bn)) return (an - bn) * sortDir;
+      return String(av).localeCompare(String(bv)) * sortDir;
+    });
+  }
+
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+  rows.forEach(r => {
+    const tr  = document.createElement("tr");
+    const st  = r["Match Status"];
+    tr.className = st === "Exact Match" ? "exact" :
+                   st.startsWith("Partial") ? "partial" : "missing";
+    COLUMNS.forEach(col => {
+      const td = document.createElement("td");
+      td.textContent = r[col] ?? "";
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+function sortBy(col) {
+  if (sortCol === col) sortDir *= -1;
+  else { sortCol = col; sortDir = 1; }
+  renderResults();
+}
+
+function renderSummary() {
+  const exact   = allResults.filter(r => r["Match Status"] === "Exact Match");
+  const partial = allResults.filter(r => r["Match Status"].startsWith("Partial"));
+  const missing = allResults.filter(r => r["Match Status"] === "NOT IN INVENTORY");
+
+  const available = allResults.filter(r =>
+    r["Match Status"] !== "NOT IN INVENTORY" && r["Inv Qty Available"] > 0
+  );
+  // Deduplicate by card name for price
+  const seen = new Set();
+  const deduped = available.filter(r => {
+    if (seen.has(r["Card Name"])) return false;
+    seen.add(r["Card Name"]); return true;
+  });
+
+  const toNum = p => { const n = parseFloat(String(p).replace("$","")); return isNaN(n) ? 0 : n; };
+  const exactTotal    = deduped.filter(r => r["Match Status"] === "Exact Match").reduce((s,r) => s + toNum(r["Market Price"]), 0);
+  const combinedTotal = deduped.reduce((s,r) => s + toNum(r["Market Price"]), 0);
+
+  document.getElementById("summary-bar").innerHTML = `
+    <span class="pill">Total: ${allResults.length}</span>
+    <span class="pill exact">✓ Exact: ${exact.length}</span>
+    <span class="pill partial">~ Partial: ${partial.length}</span>
+    <span class="pill missing">✗ Missing: ${missing.length}</span>
+    <span class="pill price">Exact Value: $${exactTotal.toFixed(2)}</span>
+    <span class="pill price">Combined Value: $${combinedTotal.toFixed(2)}</span>
+  `;
+}
+
+// ─── EXPORT CSV ────────────────────────────────────────────────────────────────
+function exportCSV() {
+  const rows = [COLUMNS.join(",")];
+  allResults.forEach(r => {
+    rows.push(COLUMNS.map(c => `"${String(r[c]??'').replace(/"/g,'""')}"`).join(","));
+  });
+  const blob = new Blob([rows.join("\n")], {type:"text/csv"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "match_results.csv";
+  a.click();
+}
+
+// ─── HELPERS ───────────────────────────────────────────────────────────────────
+function setStatus(msg) { document.getElementById("status-text").textContent = msg; }
+function setProgress(v) { document.getElementById("progress-bar").value = v; }
+function delay(ms)      { return new Promise(r => setTimeout(r, ms)); }
+function clearAll() {
+  document.getElementById("decklist-input").value = "";
+  document.getElementById("results-section").classList.add("hidden");
+  document.getElementById("export-btn").classList.add("hidden");
+  document.getElementById("summary-bar").innerHTML = "";
+  document.getElementById("tbody").innerHTML = "";
+  allResults = [];
+  setStatus("Inventory ready. Paste a decklist and click Run.");
+  setProgress(0);
+}
+
+// ─── INIT ──────────────────────────────────────────────────────────────────────
+reloadInventory();
+</script>
+</body>
+</html>
